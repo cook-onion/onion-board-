@@ -1,6 +1,4 @@
-import React, { useState, useEffect } from 'react';
 // Ant Design 在此文件中并未直接用于棋盘本身，但保留导入以备后用（例如：对话框、按钮）。
-import { Button } from 'antd';
 interface SquareProps {
     size:number;
 }

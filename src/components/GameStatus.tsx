@@ -12,7 +12,7 @@ interface GameStatusProps {
   gameStarted: boolean;
 }
 
-const GameStatus: React.FC<GameStatusProps> = ({ gameState, gameMode, aiPlayer, playerRole, playerName, players, timeLeft, gameStarted }) => {
+const GameStatus: React.FC<GameStatusProps> = ({ gameState, gameMode, aiPlayer, playerName, players, timeLeft, gameStarted }) => {
   const { isGameOver, winner, currentPlayer } = gameState;
   let statusText: string;
 
