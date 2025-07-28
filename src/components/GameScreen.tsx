@@ -200,4 +200,4 @@ const GameScreen: React.FC<GameScreenProps> = (props) => {
   );
 };
 
-export default GameScreen;
+export default React.memo(GameScreen);

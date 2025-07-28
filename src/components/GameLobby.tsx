@@ -152,4 +152,4 @@ const GameLobby: React.FC<GameLobbyProps> = (props) => {
   );
 };
 
-export default GameLobby;
+export default React.memo(GameLobby)
