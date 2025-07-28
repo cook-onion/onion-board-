@@ -22,12 +22,7 @@ import MainMenu from "./components/MainMenu";
 import GameLobby from "./components/GameLobby";
 import GameScreen from "./components/GameScreen";
 
-const YOUR_COMPUTER_LAN_IP = "192.168.1.101"; // <--- 请务必修改成你自己的IP
-const SERVER_URL =
-  import.meta.env.MODE === "production"
-    ? import.meta.env.VITE_SERVER_URL
-    : `http://${YOUR_COMPUTER_LAN_IP}:10001`;
-// const SERVER_URL = `http://${YOUR_COMPUTER_LAN_IP}:10001`;
+const SERVER_URL = import.meta.env.VITE_SERVER_URL;
 const PLAYER_DATA_KEY = "gomokuPlayerData"; // NEW: 定义localStorage的键
 
 // 新增：用于获取窗口宽度的自定义Hook
