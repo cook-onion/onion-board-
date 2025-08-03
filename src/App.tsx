@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef, useCallback } from "react";
-import { io, Socket } from "socket.io-client";
+import { useState, useEffect, useCallback } from "react";
 import { Form, message, Modal } from "antd";
+import { useSocket } from "./contexts/SocketContext"; // 导入 useSocket Hook
 
 import {
   createInitialGameState,
@@ -22,7 +22,6 @@ import MainMenu from "./components/MainMenu";
 import GameLobby from "./components/GameLobby";
 import GameScreen from "./components/GameScreen";
 
-const SERVER_URL = import.meta.env.VITE_SERVER_URL;
 const PLAYER_DATA_KEY = "gomokuPlayerData";
 
 const useWindowWidth = () => {
@@ -36,10 +35,11 @@ const useWindowWidth = () => {
 };
 
 function App() {
+  const socket = useSocket(); // 从 Context 获取 socket 实例
+  
   const [step, setStep] = useState<Step>("name");
   const [playerName, setPlayerName] = useState("");
   const [gameMode, setGameMode] = useState<GameMode>("pve");
-  const socketRef = useRef<Socket | null>(null);
   const [roomId, setRoomId] = useState<string>("");
   const [playerRole, setPlayerRole] = useState<Player | null>(null);
   const [gameState, setGameState] = useState<GameState>(
@@ -48,7 +48,7 @@ function App() {
   const [isThinking, setIsThinking] = useState(false);
   const [aiPlayer, setAiPlayer] = useState<Player>("white");
   const [gameStarted, setGameStarted] = useState(false);
-  const [isConnected, setIsConnected] = useState(false);
+  const [isConnected, setIsConnected] = useState(socket.connected);
   const [messages, setMessages] = useState<Message[]>([]);
   const [playersInRoom, setPlayersInRoom] = useState<
     { name: string; role: Player }[]
@@ -85,102 +85,86 @@ function App() {
     }
   }, []);
 
-  // 作用: 这是解决无限重连循环的核心。
-  // 1. useEffect 的依赖数组只保留 [gameMode]，确保只在切换游戏模式时才执行连接或断开操作。
-  // 2. 所有事件监听器只在 socket 创建时绑定一次，避免重复绑定。
-  // 3. 使用 ref (stateRef) 来让事件监听器内部总能访问到最新的 state，解决了闭包问题，
-  //    同时避免了将大量 state 放入 useEffect 依赖数组中。
-  const stateRef = useRef({ playerName, playersInRoom });
+  // --- 彻底简化的 useEffect ---
+  // 作用: 只负责绑定和解绑事件监听器
   useEffect(() => {
-    stateRef.current = { playerName, playersInRoom };
-  }, [playerName, playersInRoom]);
-
-  useEffect(() => {
-    if (gameMode === "pvp") {
-      // 模式是 pvp，我们需要一个 socket 连接
-      if (!socketRef.current) {
-        // 如果当前没有连接，则创建一个
-        const socket = io(SERVER_URL, {
-          transports: ["websocket"],
-        });
-        socketRef.current = socket;
-
-        // --- 只绑定一次事件监听器 ---
-        socket.on("connect", () => setIsConnected(true));
-        socket.on("disconnect", () => setIsConnected(false));
-        socket.on("updateRoomList", (rooms: RoomInfo[]) => setRoomList(rooms));
-        socket.on("gameStateUpdate", (newGameState: GameState) =>
-          setGameState(newGameState)
-        );
-        socket.on("gameStart", () => setGameStarted(true));
-        socket.on("playersUpdate", (players) => {
-          setPlayersInRoom(players);
-          if (players.length === 2) setOpponentJoined(true);
-        });
-        socket.on("newMessage", (msg: Message) => {
-          setMessages((prev) => [...prev, msg]);
-        });
-        socket.on("opponentJoined", () => setOpponentJoined(true));
-        socket.on("timerUpdate", (time: number) => setTimeLeft(time));
-        
-        socket.on("timeout", ({ winner, timedOutPlayer }) => {
-          const { playersInRoom: currentPlayers } = stateRef.current;
-          const winnerName = currentPlayers.find((p) => p.role === winner)?.name;
-          const loserName = currentPlayers.find(
-            (p) => p.role === timedOutPlayer
-          )?.name;
-          message.error(`${loserName} 超时, ${winnerName} 获胜!`);
-        });
-
-        socket.on("opponentLeft", ({ message: msg, newHostName }) => {
-          message.info(msg);
-          setGameStarted(false);
-          setOpponentJoined(false);
-          const { playerName: currentName, playersInRoom: currentPlayers } = stateRef.current;
-          const self = currentPlayers.find((p) => p.name === currentName);
-          if (self && self.name === newHostName) {
-            setPlayerRole("black");
-          }
-        });
-        
-        socket.on("opponentRequestedRestart", () => {
-          setOpponentRequestedRestart(true);
-          message.info("对手请求重新开始一局！");
-        });
-
-        socket.on("gameRestarted", ({ players }) => {
-          message.success("游戏已重新开始！双方角色互换。");
-          setRestartRequested(false);
-          setOpponentRequestedRestart(false);
-          setGameStarted(true);
-          const { playerName: currentName } = stateRef.current;
-          const self = players.find(
-            (p: { name: string }) => p.name === currentName
-          );
-          if (self) {
-            setPlayerRole(self.role);
-          }
-          setPlayersInRoom(players);
-        });
-      }
-    } else {
-      // 模式不是 pvp，我们应该断开并清理连接
-      if (socketRef.current) {
-        socketRef.current.disconnect();
-        socketRef.current = null;
-        setIsConnected(false);
-      }
+    function onConnect() { setIsConnected(true); }
+    function onDisconnect() { setIsConnected(false); }
+    function onUpdateRoomList(rooms: RoomInfo[]) { setRoomList(rooms); }
+    function onGameStateUpdate(newGameState: GameState) { setGameState(newGameState); }
+    function onGameStart() { setGameStarted(true); }
+    function onPlayersUpdate(players: { name: string; role: Player }[]) {
+      setPlayersInRoom(players);
+      if (players.length === 2) setOpponentJoined(true);
+    }
+    function onNewMessage(msg: Message) { setMessages((prev) => [...prev, msg]); }
+    function onOpponentJoined() { setOpponentJoined(true); }
+    function onTimerUpdate(time: number) { setTimeLeft(time); }
+    function onOpponentRequestedRestart() {
+        setOpponentRequestedRestart(true);
+        message.info("对手请求重新开始一局！");
+    }
+    function onGameRestarted({ players }: { players: { name: string; role: Player }[] }) {
+        message.success("游戏已重新开始！双方角色互换。");
+        setRestartRequested(false);
+        setOpponentRequestedRestart(false);
+        setGameStarted(true);
+        const self = players.find((p) => p.name === playerName);
+        if (self) setPlayerRole(self.role);
+        setPlayersInRoom(players);
+    }
+    function onOpponentLeft({ message: msg, newHostName }: { message: string, newHostName: string }) {
+        message.info(msg);
+        setGameStarted(false);
+        setOpponentJoined(false);
+        const self = playersInRoom.find((p) => p.name === playerName);
+        if (self && self.name === newHostName) setPlayerRole("black");
+    }
+    function onTimeout({ winner, timedOutPlayer }: { winner: Player, timedOutPlayer: Player }) {
+        const winnerName = playersInRoom.find((p) => p.role === winner)?.name;
+        const loserName = playersInRoom.find((p) => p.role === timedOutPlayer)?.name;
+        message.error(`${loserName} 超时, ${winnerName} 获胜!`);
     }
 
-    // 这个 cleanup 只在组件卸载时执行，确保应用关闭时断开连接
+    socket.on("connect", onConnect);
+    socket.on("disconnect", onDisconnect);
+    socket.on("updateRoomList", onUpdateRoomList);
+    socket.on("gameStateUpdate", onGameStateUpdate);
+    socket.on("gameStart", onGameStart);
+    socket.on("playersUpdate", onPlayersUpdate);
+    socket.on("newMessage", onNewMessage);
+    socket.on("opponentJoined", onOpponentJoined);
+    socket.on("timerUpdate", onTimerUpdate);
+    socket.on("opponentRequestedRestart", onOpponentRequestedRestart);
+    socket.on("gameRestarted", onGameRestarted);
+    socket.on("opponentLeft", onOpponentLeft);
+    socket.on("timeout", onTimeout);
+
     return () => {
-      if (socketRef.current) {
-        socketRef.current.disconnect();
-        socketRef.current = null;
-        setIsConnected(false);
-      }
+      socket.off("connect", onConnect);
+      socket.off("disconnect", onDisconnect);
+      socket.off("updateRoomList", onUpdateRoomList);
+      socket.off("gameStateUpdate", onGameStateUpdate);
+      socket.off("gameStart", onGameStart);
+      socket.off("playersUpdate", onPlayersUpdate);
+      socket.off("newMessage", onNewMessage);
+      socket.off("opponentJoined", onOpponentJoined);
+      socket.off("timerUpdate", onTimerUpdate);
+      socket.off("opponentRequestedRestart", onOpponentRequestedRestart);
+      socket.off("gameRestarted", onGameRestarted);
+      socket.off("opponentLeft", onOpponentLeft);
+      socket.off("timeout", onTimeout);
     };
-  }, [gameMode]); // 依赖数组只保留 gameMode!
+  }, [socket, playerName, playersInRoom]); // 依赖项现在是安全的
+
+  // --- 控制连接状态的 useEffect ---
+  useEffect(() => {
+    if (gameMode === 'pvp') {
+      socket.connect();
+    } else {
+      socket.disconnect();
+    }
+  }, [gameMode, socket]);
 
   useEffect(() => {
     if (!gameState.isGameOver) {
@@ -223,13 +207,11 @@ function App() {
     }
   }, [step, gameMode, gameState, aiPlayer]);
 
-  // --- 所有 useCallback 函数保持不变 ---
   const handleNameSubmit = useCallback(({ name }: { name: string }) => {
     if (name.trim()) {
       const trimmedName = name.trim();
       setPlayerName(trimmedName);
       setStep("menu");
-
       const expiry = new Date().getTime() + 7 * 24 * 60 * 60 * 1000;
       localStorage.setItem(
         PLAYER_DATA_KEY,
@@ -237,6 +219,7 @@ function App() {
       );
     }
   }, []);
+
   const handleSquareClick = useCallback(
     (row: number, col: number) => {
       if (gameState.isGameOver || isThinking) return;
@@ -245,7 +228,7 @@ function App() {
           setGameState((prev) => handlePlacePiece(prev, row, col));
       } else if (gameMode === "pvp") {
         if (gameState.currentPlayer === playerRole && gameStarted)
-          socketRef.current?.emit("placePiece", {
+          socket.emit("placePiece", {
             roomId,
             row,
             col,
@@ -253,7 +236,7 @@ function App() {
           });
       }
     },
-    [gameState, isThinking, gameMode, aiPlayer, playerRole, gameStarted, roomId]
+    [gameState, isThinking, gameMode, aiPlayer, playerRole, gameStarted, roomId, socket]
   );
 
   const handleRestart = useCallback(() => {
@@ -266,7 +249,7 @@ function App() {
   }, [gameMode]);
 
   const handleLeaveRoom = useCallback(() => {
-    socketRef.current?.emit("leaveRoom");
+    socket.emit("leaveRoom");
     setStep("lobby");
     setRoomId("");
     setPlayerRole(null);
@@ -277,7 +260,7 @@ function App() {
     setOpponentJoined(false);
     setRestartRequested(false);
     setOpponentRequestedRestart(false);
-  }, []);
+  }, [socket]);
 
   const handleBackToLobby = useCallback(() => {
     try {
@@ -295,9 +278,10 @@ function App() {
       console.log(error);
     }
   }, [handleLeaveRoom]);
+
   const handleCreateRoom = useCallback(
     (values: { roomName: string; password?: string }) => {
-      socketRef.current?.emit(
+      socket.emit(
         "createRoom",
         { playerName, ...values },
         (response: {
@@ -320,20 +304,22 @@ function App() {
         }
       );
     },
-    [playerName, form]
+    [playerName, form, socket]
   );
+
   const handleRequestRestart = useCallback(() => {
     if (!roomId) return;
-    socketRef.current?.emit("requestRestart", { roomId });
+    socket.emit("requestRestart", { roomId });
     setRestartRequested(true);
-  }, [roomId]);
+  }, [roomId, socket]);
+
   const handleJoinRoom = useCallback(
     (room: RoomInfo) => {
       if (room.playerCount >= 2) return message.error("房间已满");
       if (room.hasPassword) {
         setJoiningRoom(room);
       } else {
-        socketRef.current?.emit(
+        socket.emit(
           "joinRoom",
           { roomId: room.roomId, playerName },
           ({
@@ -353,12 +339,13 @@ function App() {
         );
       }
     },
-    [playerName]
+    [playerName, socket]
   );
+
   const handlePasswordSubmit = useCallback(
     (values: { password?: string }) => {
       if (!joiningRoom) return;
-      socketRef.current?.emit(
+      socket.emit(
         "joinRoom",
         { roomId: joiningRoom.roomId, playerName, password: values.password },
         ({
@@ -379,25 +366,25 @@ function App() {
         }
       );
     },
-    [joiningRoom, playerName]
+    [joiningRoom, playerName, socket]
   );
+
   const handleSendMessage = useCallback(
     (msg: string) =>
-      socketRef.current?.emit("sendMessage", { roomId, message: msg }),
-    [roomId]
+      socket.emit("sendMessage", { roomId, message: msg }),
+    [roomId, socket]
   );
 
   const handleStartGame = useCallback(() => {
-    socketRef.current?.emit(
+    socket.emit(
       "startGame",
       { roomId },
       (response: { success?: boolean; error?: string }) => {
         if (response.error) message.error(response.error);
       }
     );
-  }, [roomId]);
+  }, [roomId, socket]);
 
-  // --- renderContent 保持不变 ---
   const renderContent = () => {
     switch (step) {
       case "name":
@@ -447,7 +434,7 @@ function App() {
             timeLeft={timeLeft}
             messages={messages}
             onSendMessage={handleSendMessage}
-            selfId={socketRef.current?.id || null}
+            selfId={socket.id || null}
             onRestart={handleRestart}
             onRestartPVP={handleRequestRestart}
             restartRequested={restartRequested}
