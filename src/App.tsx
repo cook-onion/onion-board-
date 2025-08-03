@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { io, Socket } from "socket.io-client";
 import { Form, message, Modal } from "antd";
 
@@ -153,7 +153,7 @@ function App() {
       socketRef.current.disconnect();
       socketRef.current = null;
     }
-  }, [gameMode]);
+  }, [gameMode, playerName]);
   useEffect(() => {
     if (!gameState.isGameOver) {
       setRestartRequested(false);
@@ -197,7 +197,10 @@ function App() {
   }, [step, gameMode, gameState, aiPlayer]);
 
   // --- 事件处理 ---
-  const handleNameSubmit = ({ name }: { name: string }) => {
+  // 使用 useCallback 包裹此函数。这可以防止在 App 组件重渲染时创建新的函数实例，
+  //       从而避免不必要的子组件重渲染。空依赖数组 `[]` 表示此函数不依赖任何外部变量，
+  //       因此它在组件的整个生命周期中都将是同一个函数实例。
+  const handleNameSubmit = useCallback(({ name }: { name: string }) => {
     if (name.trim()) {
       const trimmedName = name.trim();
       setPlayerName(trimmedName);
@@ -209,33 +212,37 @@ function App() {
         JSON.stringify({ name: trimmedName, expiry })
       );
     }
-  };
-  const handleSquareClick = (row: number, col: number) => {
-    if (gameState.isGameOver || isThinking) return;
-    if (gameMode === "pve") {
-      if (gameState.currentPlayer !== aiPlayer)
-        setGameState((prev) => handlePlacePiece(prev, row, col));
-    } else if (gameMode === "pvp") {
-      if (gameState.currentPlayer === playerRole && gameStarted)
-        socketRef.current?.emit("placePiece", {
-          roomId,
-          row,
-          col,
-          player: playerRole,
-        });
-    }
-  };
-  const handleRestart = () => {
+  }, []);
+  const handleSquareClick = useCallback(
+    (row: number, col: number) => {
+      if (gameState.isGameOver || isThinking) return;
+      if (gameMode === "pve") {
+        if (gameState.currentPlayer !== aiPlayer)
+          setGameState((prev) => handlePlacePiece(prev, row, col));
+      } else if (gameMode === "pvp") {
+        if (gameState.currentPlayer === playerRole && gameStarted)
+          socketRef.current?.emit("placePiece", {
+            roomId,
+            row,
+            col,
+            player: playerRole,
+          });
+      }
+    },
+    [gameState, isThinking, gameMode, aiPlayer, playerRole, gameStarted, roomId]
+  );
+
+  const handleRestart = useCallback(() => {
     if (gameMode === "pve") {
       const newAiPlayer = Math.random() < 0.5 ? "black" : "white";
       setAiPlayer(newAiPlayer);
       setGameState(createInitialGameState());
       if (newAiPlayer === "black") setIsThinking(true);
     }
-  };
+  }, [gameMode]);
 
   // NEW: 主动离开房间的函数
-  const handleLeaveRoom = () => {
+  const handleLeaveRoom = useCallback(() => {
     socketRef.current?.emit("leaveRoom");
     setStep("lobby");
     setRoomId("");
@@ -245,11 +252,11 @@ function App() {
     setMessages([]);
     setPlayersInRoom([]);
     setOpponentJoined(false);
-    setRestartRequested(false); 
-    setOpponentRequestedRestart(false); 
-  };
+    setRestartRequested(false);
+    setOpponentRequestedRestart(false);
+  }, []);
 
-  const handleBackToLobby = () => {
+  const handleBackToLobby = useCallback(() => {
     try {
       Modal.confirm({
         title: "确认返回大厅吗?",
@@ -264,41 +271,73 @@ function App() {
     } catch (error) {
       console.log(error);
     }
-  };
-  const handleCreateRoom = (values: {
-    roomName: string;
-    password?: string;
-  }) => {
-    socketRef.current?.emit(
-      "createRoom",
-      { playerName, ...values },
-      (response: { roomId?: string; playerRole?: Player; error?: string }) => {
-        if (response.error) {
-          message.error(response.error);
-        } else {
-          setIsCreateModalVisible(false);
-          form.resetFields();
-          setRoomId(response.roomId!);
-          setPlayerRole(response.playerRole!);
-          setPlayersInRoom([{ name: playerName, role: response.playerRole! }]);
-          setStep("game");
+  }, [handleLeaveRoom]);
+  const handleCreateRoom = useCallback(
+    (values: { roomName: string; password?: string }) => {
+      socketRef.current?.emit(
+        "createRoom",
+        { playerName, ...values },
+        (response: {
+          roomId?: string;
+          playerRole?: Player;
+          error?: string;
+        }) => {
+          if (response.error) {
+            message.error(response.error);
+          } else {
+            setIsCreateModalVisible(false);
+            form.resetFields();
+            setRoomId(response.roomId!);
+            setPlayerRole(response.playerRole!);
+            setPlayersInRoom([
+              { name: playerName, role: response.playerRole! },
+            ]);
+            setStep("game");
+          }
         }
-      }
-    );
-  };
-  const handleRequestRestart = () => {
+      );
+    },
+    [playerName, form]
+  );
+  const handleRequestRestart = useCallback(() => {
     if (!roomId) return;
     socketRef.current?.emit("requestRestart", { roomId });
     setRestartRequested(true);
-  };
-  const handleJoinRoom = (room: RoomInfo) => {
-    if (room.playerCount >= 2) return message.error("房间已满");
-    if (room.hasPassword) {
-      setJoiningRoom(room);
-    } else {
+  }, [roomId]);
+  const handleJoinRoom = useCallback(
+    (room: RoomInfo) => {
+      if (room.playerCount >= 2) return message.error("房间已满");
+      if (room.hasPassword) {
+        setJoiningRoom(room);
+      } else {
+        socketRef.current?.emit(
+          "joinRoom",
+          { roomId: room.roomId, playerName },
+          ({
+            playerRole: role,
+            error,
+          }: {
+            playerRole?: Player;
+            error?: string;
+          }) => {
+            if (error) message.error(error);
+            else {
+              setRoomId(room.roomId);
+              setPlayerRole(role!);
+              setStep("game");
+            }
+          }
+        );
+      }
+    },
+    [playerName]
+  );
+  const handlePasswordSubmit = useCallback(
+    (values: { password?: string }) => {
+      if (!joiningRoom) return;
       socketRef.current?.emit(
         "joinRoom",
-        { roomId: room.roomId, playerName },
+        { roomId: joiningRoom.roomId, playerName, password: values.password },
         ({
           playerRole: role,
           error,
@@ -306,42 +345,26 @@ function App() {
           playerRole?: Player;
           error?: string;
         }) => {
-          if (error) message.error(error);
-          else {
-            setRoomId(room.roomId);
+          if (error) {
+            message.error(error);
+          } else {
+            setRoomId(joiningRoom.roomId);
             setPlayerRole(role!);
+            setJoiningRoom(null);
             setStep("game");
           }
         }
       );
-    }
-  };
-  const handlePasswordSubmit = (values: { password?: string }) => {
-    if (!joiningRoom) return;
-    socketRef.current?.emit(
-      "joinRoom",
-      { roomId: joiningRoom.roomId, playerName, password: values.password },
-      ({
-        playerRole: role,
-        error,
-      }: {
-        playerRole?: Player;
-        error?: string;
-      }) => {
-        if (error) {
-          message.error(error);
-        } else {
-          setRoomId(joiningRoom.roomId);
-          setPlayerRole(role!);
-          setJoiningRoom(null);
-          setStep("game");
-        }
-      }
-    );
-  };
-  const handleSendMessage = (msg: string) =>
-    socketRef.current?.emit("sendMessage", { roomId, message: msg });
-  const handleStartGame = () => {
+    },
+    [joiningRoom, playerName]
+  );
+  const handleSendMessage = useCallback(
+    (msg: string) =>
+      socketRef.current?.emit("sendMessage", { roomId, message: msg }),
+    [roomId]
+  );
+
+  const handleStartGame = useCallback(() => {
     socketRef.current?.emit(
       "startGame",
       { roomId },
@@ -349,7 +372,7 @@ function App() {
         if (response.error) message.error(response.error);
       }
     );
-  };
+  }, [roomId]);
 
   // --- 渲染函数 ---
   const renderContent = () => {
