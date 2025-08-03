@@ -90,7 +90,10 @@ function App() {
   useEffect(() => {
     if (gameMode === "pvp" && !socketRef.current) {
       //确保只连一次
-      const socket = io(SERVER_URL);
+      const socket = io(SERVER_URL, {
+        // 作用: 强制使用 WebSocket 传输，避免使用 HTTP 轮询，这在线上环境更稳定。
+        transports: ["websocket"],
+      });
       socketRef.current = socket;
       socket.on("connect", () => setIsConnected(true));
       socket.on("disconnect", () => setIsConnected(false));
