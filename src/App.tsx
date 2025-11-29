@@ -249,8 +249,11 @@ function App() {
   }, [gameMode]);
 
   const handleLeaveRoom = useCallback(() => {
-    socket.emit("leaveRoom");
-    setStep("lobby");
+    if (gameMode === "pvp") {
+      socket.emit("leaveRoom");
+    }
+    // 根据游戏模式决定返回位置
+    setStep(gameMode === "pve" ? "menu" : "lobby");
     setRoomId("");
     setPlayerRole(null);
     setGameStarted(false);
@@ -260,13 +263,16 @@ function App() {
     setOpponentJoined(false);
     setRestartRequested(false);
     setOpponentRequestedRestart(false);
-  }, [socket]);
+  }, [socket, gameMode]);
 
   const handleBackToLobby = useCallback(() => {
     try {
+      const isBackToMenu = gameMode === "pve";
       Modal.confirm({
-        title: "确认返回大厅吗?",
-        content: "返回大厅将离开当前房间，游戏进度不会保存。",
+        title: isBackToMenu ? "确认返回菜单吗?" : "确认返回大厅吗?",
+        content: isBackToMenu 
+          ? "返回菜单将重置当前游戏，游戏进度不会保存。"
+          : "返回大厅将离开当前房间，游戏进度不会保存。",
         okText: "确认",
         cancelText: "取消",
         maskClosable: false,
@@ -277,7 +283,7 @@ function App() {
     } catch (error) {
       console.log(error);
     }
-  }, [handleLeaveRoom]);
+  }, [handleLeaveRoom, gameMode]);
 
   const handleCreateRoom = useCallback(
     (values: { roomName: string; password?: string }) => {

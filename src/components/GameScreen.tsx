@@ -193,7 +193,9 @@ const GameScreen: React.FC<GameScreenProps> = (props) => {
           {gameState.isGameOver &&
             gameMode === "pvp" &&
             renderPvpRestartButton()}
-          <Button onClick={onBackToLobby}>返回大厅</Button>
+          <Button onClick={onBackToLobby}>
+            {gameMode === "pve" ? "返回菜单" : "返回大厅"}
+          </Button>
         </div>
       </div>
     </div>
